@@ -4,12 +4,33 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import chelper
-import math
+import logging, math, multiprocessing
 
 def float_range(s, e, i):
     while s <= e + 1e-9:
         yield s
         s += i
+
+class RawValues:
+    def __init__(self, raw_values):
+        self.n = n = raw_values.n
+        self.t = [raw_values.t[i] for i in range(0, n)]
+        self.ax = [raw_values.ax[i] for i in range(0, n)]
+        self.ay = [raw_values.ay[i] for i in range(0, n)]
+        self.az = [raw_values.az[i] for i in range(0, n)]
+
+def measure_accel(connection, time):
+    ffi_main, ffi_lib = chelper.get_ffi()
+    raw_values = None
+    adxl345 = ffi_lib.adxl345_init()
+    if adxl345 != ffi_main.NULL:
+        values_wrapper = ffi_lib.adxl345_measure(adxl345, time)
+        if values_wrapper != ffi_main.NULL:
+            raw_values = RawValues(values_wrapper)
+            ffi_lib.accel_values_free(values_wrapper)
+        ffi_lib.adxl345_free(adxl345)
+    connection.send(raw_values)
+    connection.close()
 
 class ResonanceTester:
     def __init__(self, config):
@@ -25,11 +46,6 @@ class ResonanceTester:
                 , above=0.0, below=self.probe_time-self.meas_offset)
         self.flush_time = config.getfloat('flush_time', 0.5, minval=0.0)
         self.pause_between_probes = config.getfloat('pause_between_probes', 2.0, above=0.1)
-        ffi_main, ffi_lib = chelper.get_ffi()
-        self.ffi_main, self.ffi_lib = ffi_main, ffi_lib
-        self.adxl345 = ffi_main.gc(ffi_lib.adxl345_init(), ffi_lib.adxl345_free)
-        if self.adxl345 == ffi_main.NULL:
-            return
 
         self.gcode = self.printer.lookup_object('gcode')
         self.gcode.register_command("MEASURE_AXES_NOISE", self.cmd_MEASURE_AXES_NOISE)
@@ -103,7 +119,8 @@ class ResonanceTester:
                 if csvfile is not None:
                     csvfile.close()
                 return reactor.NEVER
-            accel = max(min_accel, self.accel_per_hz * freq)
+            accel = min(max(min_accel, self.accel_per_hz * freq),
+                        toolhead.max_accel_to_decel)
             raw_output = (None if raw_output_fmt is None
                           else raw_output_fmt % (freq,))
             vx, vy, vz = self._run_test(toolhead, [sX, sY], vib_dir, vel, accel
@@ -111,6 +128,7 @@ class ResonanceTester:
             gcmd.respond_info("%.3f, %.6f, %.6f, %.6f" % (freq, vx, vy, vz))
             if csvfile is not None:
                 csvfile.write("%.3f,%.6f,%.6f,%.6f\n" % (freq, vx, vy, vz))
+                csvfile.flush()
             return reactor.monotonic() + self.pause_between_probes
         reactor.register_timer(test_single_freq, reactor.NOW)
 
@@ -136,15 +154,17 @@ class ResonanceTester:
             vX = gcmd.get_float("VIB_X")
             vY = gcmd.get_float("VIB_Y")
 
+        toolhead = self.printer.lookup_object('toolhead')
+
         freq = gcmd.get_float("FREQ")
-        accel = gcmd.get_float("ACCEL", self.accel_per_hz * freq)
+        accel = gcmd.get_float("ACCEL", min(self.accel_per_hz * freq,
+                                            toolhead.max_accel_to_decel))
         vel = gcmd.get_float("MOVE_SPEED", self.move_speed)
         probe_time = gcmd.get_float("PROBE_TIME", self.probe_time)
         meas_time = gcmd.get_float("MEAS_TIME", self.meas_time)
         meas_offset = gcmd.get_float("MEAS_OFFSET", self.meas_offset)
         raw_output = gcmd.get("RAW_OUTPUT", None)
 
-        toolhead = self.printer.lookup_object('toolhead')
         vx, vy, vz = self._run_test(toolhead, [X, Y], [vX, vY], vel, accel, freq
                 , probe_time, meas_time, meas_offset, raw_output)
         gcmd.respond_info("Axes vibrations: %.6f (x), %.6f (y), %.6f (z)"
@@ -173,8 +193,9 @@ class ResonanceTester:
         for move in moves:
             g1_gcmd = self.gcode.create_gcode_command("G1", "G1", move)
             self.gcode.cmd_G1(g1_gcmd)
-        toolhead.get_last_move_time()
-        raw_values = self._measure_accel(probe_time + self.flush_time)
+
+        raw_values = self._measure_accel(probe_time + self.flush_time
+                , toolhead.get_last_move_time)
 
         g1_gcmd = self.gcode.create_gcode_command("G1", "G1"
                 , {'X': start[0], 'Y': start[1], 'F': self.move_speed * 60.})
@@ -225,12 +246,21 @@ class ResonanceTester:
         a2 = min_accel * min_accel
         return 2. * ax / a2, 2. * ay / a2, 2. * az / a2
 
-    def _measure_accel(self, T):
-        values_wrapper = self.ffi_lib.adxl345_measure(self.adxl345, T)
-        if values_wrapper == self.ffi_main.NULL:
+    def _measure_accel(self, T, cb_run_during_measuring=None):
+        parent_conn, child_conn = multiprocessing.Pipe()
+        p = multiprocessing.Process(target=measure_accel
+                , args=(child_conn, T))
+        p.start()
+
+        if cb_run_during_measuring is not None:
+            cb_run_during_measuring()
+
+        raw_values = parent_conn.recv()
+        p.join()
+        if raw_values is None:
             raise self.gcode.error(
                     "Error reading acceleration values from ADXL345")
-        return self.ffi_main.gc(values_wrapper, self.ffi_lib.accel_values_free)
+        return raw_values
 
     def _calc_vibrations(self, raw_values, accel, time, offset):
         # Find start of acceleration
@@ -244,6 +274,8 @@ class ResonanceTester:
             # A heuristic to find the beginning of the move
             if ax + ay + az > .125 * a2:
                 break
+        if i >= raw_values.n-1:
+            raise self.gcode.error("No vibrations measured, wrong timing?")
         # Skip 'offset' time from the beginning of the toolhead move
         for j in range(i+1, raw_values.n):
             if raw_values.t[j] - raw_values.t[i] >= offset:
@@ -253,6 +285,8 @@ class ResonanceTester:
         for j in range(i+1, raw_values.n):
             if raw_values.t[j] - raw_values.t[i] >= time:
                 break
+        logging.info("Processing vibrations within [%.6f, %.6f]",
+                     raw_values.t[i], raw_values.t[j])
         ax, ay, az = self._integrate_squared(raw_values,
                                              self._integrate(raw_values, i, j),
                                              i, j)
