@@ -38,7 +38,7 @@ class ResonanceTester:
         self.seg_sec = config.getfloat('seg_sec', 0.0005, above=0.0)
         self.move_speed = config.getfloat('move_speed', 25.0, above=0.0)
         self.accel_per_hz = config.getfloat('accel_per_hz', 100.0, above=0.0)
-        self.min_accel = config.getfloat('min_accel', 2000.0, above=0.0)
+        self.min_accel = config.getfloat('min_accel', 1000.0, above=0.0)
         self.probe_time = config.getfloat('probe_time', 2.0, above=0.0)
         self.meas_offset = config.getfloat('meas_offset', 0.4
                 , above=0.0, below=self.probe_time)
@@ -52,6 +52,7 @@ class ResonanceTester:
         self.gcode.register_command("MEASURE_ACCEL", self.cmd_MEASURE_ACCEL)
         self.gcode.register_command("TEST_FREQ", self.cmd_TEST_FREQ)
         self.gcode.register_command("TEST_VIBRATIONS", self.cmd_TEST_VIBRATIONS)
+        self.gcode.register_command("TEST_RESONANCES", self.cmd_TEST_RESONANCES)
 
     def cmd_TEST_VIBRATIONS(self, gcmd):
         gcodestatus = self.gcode.get_status(None)
@@ -169,6 +170,73 @@ class ResonanceTester:
                 , probe_time, meas_time, meas_offset, raw_output)
         gcmd.respond_info("Axes vibrations: %.6f (x), %.6f (y), %.6f (z)"
                           % (vx, vy, vz))
+
+    def cmd_TEST_RESONANCES(self, gcmd):
+        gcodestatus = self.gcode.get_status(None)
+        if not gcodestatus['absolute_coordinates']:
+            raise self.gcode.error(
+                    "TEST_FREQ does not support relative move mode")
+        currentPos = gcodestatus['gcode_position']
+        X = currentPos[0]
+        Y = currentPos[1]
+
+        # Parse parameters
+        vX = gcmd.get_float("VIB_X", None)
+        vY = gcmd.get_float("VIB_Y", None)
+        if vX is None and vY is None:
+            axis = gcmd.get("AXIS")
+            if axis.upper() == "X":
+                vX, vY = 1., 0.
+            elif axis.upper() == "Y":
+                vX, vY = 0., 1.
+            else:
+                raise gcmd.error("AXIS should only be X or Y, got '%s'", axis)
+        else:
+            vX = vX or 0.
+            vY = vY or 0.
+
+        toolhead = self.printer.lookup_object('toolhead')
+
+        freq_start = gcmd.get_float("FREQ_START", 10.)
+        freq_end = gcmd.get_float("FREQ_END", 100.)
+        freq_step = gcmd.get_float("FREQ_STEP", 1.)
+        min_accel = gcmd.get_float("MIN_ACCEL", self.min_accel)
+        raw_output = gcmd.get("RAW_OUTPUT")
+
+        vib_dir = self._normalize([vX, vY])
+
+        # Approximate (over-)estimate of the total test time
+        test_time = sum([2.5 / freq for freq in
+                         float_range(freq_start, freq_end, freq_step)])
+        # Generate moves
+        def exec_test():
+            sign = 1.
+            flush_time = 0.
+            for freq in float_range(freq_start, freq_end, freq_step):
+                t = 1. / freq
+                accel = min(max(min_accel, self.accel_per_hz * freq),
+                            toolhead.requested_accel_to_decel)
+                V = accel * t
+                toolhead.cmd_M204(self.gcode.create_gcode_command(
+                    "M204", "M204", {"S": accel}))
+                L = .5 * accel * t**2
+                nX = X + sign * vib_dir[0] * L
+                nY = Y + sign * vib_dir[1] * L
+                F = V * 60.
+                self.gcode.cmd_G1(self.gcode.create_gcode_command(
+                    "G1", "G1", {'X': nX, 'Y': nY, 'F': F}))
+                flush_time += t
+                if flush_time >= toolhead.buffer_time_high:
+                    toolhead.get_last_move_time()
+                    flush_time = 0.
+                self.gcode.cmd_G1(self.gcode.create_gcode_command(
+                    "G1", "G1", {'X': X, 'Y': Y, 'F': F}))
+                sign = -sign
+                flush_time += t
+            toolhead.get_last_move_time()
+        raw_values = self._measure_accel(test_time + self.flush_time, exec_test)
+        if raw_output is not None:
+            self._save_raw_values(raw_values, raw_output)
 
     def cmd_MEASURE_ACCEL(self, gcmd):
         output = gcmd.get("RAW_OUTPUT")
