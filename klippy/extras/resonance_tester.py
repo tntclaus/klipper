@@ -126,8 +126,15 @@ class ResonanceTester:
                         toolhead.max_accel_to_decel)
             raw_output = (None if raw_output_fmt is None
                           else raw_output_fmt % (freq,))
-            vx, vy, vz = self._run_test(toolhead, [sX, sY], vib_dir, vel, accel
-                    , freq, probe_time, meas_time, meas_offset, raw_output)
+            try:
+                vx, vy, vz = self._run_test(
+                        toolhead, [sX, sY], vib_dir, vel, accel, freq,
+                        probe_time, meas_time, meas_offset, raw_output)
+            except self.gcode.error as e:
+                gcmd.respond_info("Error measuring vibrations: %s" % (str(e),))
+                if csvfile is not None:
+                    csvfile.close()
+                return reactor.NEVER
             gcmd.respond_info("%.3f, %.6f, %.6f, %.6f" % (freq, vx, vy, vz))
             if csvfile is not None:
                 csvfile.write("%.3f,%.6f,%.6f,%.6f\n" % (freq, vx, vy, vz))
