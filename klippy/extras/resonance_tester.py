@@ -6,6 +6,8 @@
 import chelper
 import logging, math, multiprocessing
 
+MIN_TEST_FREQ = 10.
+
 def float_range(s, e, i):
     while s <= e + 1e-9:
         yield s
@@ -76,8 +78,8 @@ class ResonanceTester:
             vX = gcmd.get_float("VIB_X")
             vY = gcmd.get_float("VIB_Y")
 
-        freq_start = gcmd.get_float("FREQ_START")
-        freq_end = gcmd.get_float("FREQ_END")
+        freq_start = gcmd.get_float("FREQ_START", minval=MIN_TEST_FREQ)
+        freq_end = gcmd.get_float("FREQ_END", minval=freq_start)
         freq_step = gcmd.get_float("FREQ_STEP")
         vel = gcmd.get_float("MOVE_SPEED", self.move_speed)
         min_accel = gcmd.get_float("MIN_ACCEL", self.min_accel)
@@ -157,7 +159,7 @@ class ResonanceTester:
 
         toolhead = self.printer.lookup_object('toolhead')
 
-        freq = gcmd.get_float("FREQ")
+        freq = gcmd.get_float("FREQ", minval=MIN_TEST_FREQ)
         accel = gcmd.get_float("ACCEL", min(self.accel_per_hz * freq,
                                             toolhead.max_accel_to_decel))
         vel = gcmd.get_float("MOVE_SPEED", self.move_speed)
@@ -272,7 +274,8 @@ class ResonanceTester:
 
         if raw_output is not None:
             self._save_raw_values(raw_values, raw_output)
-        return self._calc_vibrations(raw_values, accel, meas_time, meas_offset)
+        return self._calc_vibrations(raw_values, accel, freq,
+                                     meas_time, meas_offset)
 
     def _normalize(self, vec):
         inv_D = 1. / math.sqrt(sum([x*x for x in vec]))
@@ -330,7 +333,9 @@ class ResonanceTester:
                     "Error reading acceleration values from ADXL345")
         return raw_values
 
-    def _calc_vibrations(self, raw_values, accel, time, offset):
+    def _calc_vibrations(self, raw_values, accel, freq, time, offset):
+        # Take the largest number of full periods
+        time = math.floor(time * freq) / freq
         # Find start of acceleration
         a2 = accel * accel
         SLICE = 20
