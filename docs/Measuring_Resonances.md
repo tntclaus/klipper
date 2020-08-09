@@ -4,8 +4,8 @@ Measuring Resonances
 This branch provides a support for ADXL345 accelerometer, which can be used to
 measure resonance frequencies of the printer for different axes. In turn, this
 can be used to fine-tune input shapers. Note that using ADXL345 requires some
-soldering and crimping. Also note that only Raspberry Pi setups are supported
-at this time.
+soldering and crimping. Also note that only Raspberry Pi setups have
+been tested at this time.
 
 
 Installation instructions
@@ -37,94 +37,28 @@ toolhead and one for the bed, and run the measurements twice.
 
 ## Software installation
 
-Instructions below assume that you have an existing Klipper installation
-from the main repo. If you don't, follow the
-[instructions](https://github.com/KevinOConnor/klipper/blob/master/docs/Installation.md)
-to set up the Klipper from the main repo first.
+Follow the instructions in the
+[RPi Microcontroller document](RPi_microcontroller.md) to setup the
+"linux mcu" on the Raspberry Pi.
 
-To try experimental support for ADXL345 accelerometer in your existing
-Klipper installation, SSH to your Raspberry Pi and run the following commands:
-```
-$ cd klipper
-$ sudo service klipper stop
-```
-Install the prerequisites:
-```
-$ sudo apt install pigpio
-```
+Make sure the Linux SPI driver is enabled by running `sudo
+raspi-config` and enabling SPI under the "Interfacing options" menu.
 
-Configure the new Git remote:
+Add the following to the printer.cfg file:
 ```
-$ git remote add s-curve-exp https://github.com/dmbutyugin/klipper.git
-$ git remote -v
-```
-The output should list the new remote among other things:
-```
-s-curve-exp	https://github.com/dmbutyugin/klipper.git (fetch)
-s-curve-exp	https://github.com/dmbutyugin/klipper.git (push)
+[mcu rpi]
+serial: /tmp/klipper_host_mcu
+
+[adxl345 rpiaccel]
+cs_pin: rpi:None
 ```
 
-Now check the current branch, it will be needed to roll back after you are
-finished with the experiments:
-```
-$ git branch
-```
-will most likely list
-```
-* master
-```
-
-Check out the new branch:
-```
-$ git fetch s-curve-exp
-$ git checkout s-curve-exp/adxl345-spi
-```
-
-Start Klipper:
-```
-$ sudo service klipper start
-```
-
-If you want to switch back to the main Klipper branch, SSH to your Raspberry
-Pi and run the following commands:
-```
-$ cd klipper
-$ sudo service klipper stop
-$ git checkout master
-$ sudo service klipper start
-```
-
-Add to your printer.cfg the following empty section
-```
-[resonance_tester]
-```
-
-and start Klipper
-```
-$ sudo service klipper start
-```
-
-## Updating
-
-To update an existing installation to a newer version of the code, run the
-following commands:
-```
-$ cd klipper
-$ sudo service klipper stop
-$ git fetch s-curve-exp
-$ git checkout s-curve-exp/adxl345-spi
-$ sudo service klipper start
-```
+and restart Klipper via the `RESTART` command.
 
 Measuring the resonances
 ===========================
 
 ## Checking the setup
-
-Run the following command on your Raspberry Pi via a terminal:
-```
-$ sudo pigpiod
-```
 
 Now you can test a connection. In Octoprint, run
 `MEASURE_ACCEL RAW_OUTPUT=/tmp/accel.csv`. In terminal, try executing
@@ -152,12 +86,6 @@ If that works, run for Y axis:
 the response.
 
 ## Measuring the resonances
-
-If you didn't do so yet since the last Raspberry Pi reboot, run the following
-command on your Raspberry Pi via a terminal:
-```
-$ sudo pigpiod
-```
 
 In `printer.cfg` add or replace the following values:
 ```

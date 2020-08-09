@@ -4,7 +4,7 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, time, collections
-from . import bus
+from . import bus, resonance_tester
 
 # ADXL345 registers
 REG_DEVID = 0x00
@@ -93,6 +93,7 @@ class ADXL345:
         gcode.register_mux_command("ACCELEROMETER_MEASURE", "CHIP", name,
                                    self.cmd_ACCELEROMETER_MEASURE,
                                    desc=self.cmd_ACCELEROMETER_MEASURE_help)
+        resonance_tester.ResonanceTester(config, self)
     def _build_config(self):
         self.query_adxl345_cmd = self.mcu.lookup_command(
             "query_adxl345 oid=%c clock=%u rest_ticks=%u",
