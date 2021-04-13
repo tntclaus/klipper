@@ -19,12 +19,23 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#include <sys/mman.h>
-
-
 #define CHIP_FILE_NAME "/dev/gpiochip%u"
 #define GPIO_CONSUMER "klipper"
 
+
+DECL_ENUMERATION_RANGE("pin", "gpio0", GPIO(0, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip0/gpio0", GPIO(0, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip1/gpio0", GPIO(1, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip2/gpio0", GPIO(2, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip3/gpio0", GPIO(3, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip4/gpio0", GPIO(4, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip5/gpio0", GPIO(5, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip6/gpio0", GPIO(6, 0), MAX_GPIO_LINES);
+DECL_ENUMERATION_RANGE("pin", "gpiochip7/gpio0", GPIO(7, 0), MAX_GPIO_LINES);
+
+
+#ifdef GPIO_NATIVE_RPI3
+#include <sys/mman.h>
 #define BCM2708_PERI_BASE        0x3F000000
 #define GPIO_BASE                (BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
 
@@ -50,18 +61,6 @@ volatile unsigned *gpio;
 
 #define GPIO_PULL *(gpio+37) // Pull up/pull down
 #define GPIO_PULLCLK0 *(gpio+38) // Pull up/pull down clock
-
-
-DECL_ENUMERATION_RANGE("pin", "gpio0", GPIO(0, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip0/gpio0", GPIO(0, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip1/gpio0", GPIO(1, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip2/gpio0", GPIO(2, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip3/gpio0", GPIO(3, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip4/gpio0", GPIO(4, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip5/gpio0", GPIO(5, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip6/gpio0", GPIO(6, 0), MAX_GPIO_LINES);
-DECL_ENUMERATION_RANGE("pin", "gpiochip7/gpio0", GPIO(7, 0), MAX_GPIO_LINES);
-
 
 //
 // Set up a memory regions to access GPIO
@@ -98,8 +97,7 @@ void setup_io()
 
 
 } // setup_io
-
-
+#endif
 
 struct gpio_line {
     int chipid;
@@ -118,7 +116,6 @@ get_chip_fd(uint8_t chipId) {
     int i = 0;
     if (gpio_chip_fd[chipId] <= 0) {
         snprintf(chipFilename,sizeof(chipFilename), CHIP_FILE_NAME, chipId);
-
         if(access(chipFilename, F_OK) < 0){
             snprintf(errorMessage,sizeof(errorMessage),
                 "%s not found!",chipFilename);
@@ -132,15 +129,11 @@ get_chip_fd(uint8_t chipId) {
             report_errno(errorMessage,-1);
             shutdown("Unable to open GPIO chip device");
         }
-
         for (i=0; i<MAX_GPIO_LINES; ++i) {
             lines[GPIO(chipId,i)].offset = i;
             lines[GPIO(chipId,i)].fd = -1;
             lines[GPIO(chipId,i)].chipid = chipId;
         }
-
-
-
     }
     return gpio_chip_fd[chipId];
 }
@@ -159,14 +152,12 @@ gpio_out_setup(uint32_t pin, uint8_t val)
 static void
 gpio_release_line(struct gpio_line* line)
 {
-    if(line->chipid == 0) {
-
-    } else {
-        if (line->fd > 0) {
-            close(line->fd);
-            line->fd = -1;
-        }
+#ifndef GPIO_NATIVE_RPI3
+    if (line->fd > 0) {
+        close(line->fd);
+        line->fd = -1;
     }
+#endif
 }
 
 void
@@ -178,6 +169,7 @@ gpio_out_write_generic(struct gpio_out g, uint8_t val) {
     g.line->state = !!val;
 }
 
+#ifdef GPIO_NATIVE_RPI3
 void
 gpio_out_write_bcm2835(struct gpio_out g, uint8_t val)
 {
@@ -189,15 +181,16 @@ gpio_out_write_bcm2835(struct gpio_out g, uint8_t val)
     }
     g.line->state = !!val;
 }
+#endif
 
 void
 gpio_out_write(struct gpio_out g, uint8_t val)
 {
-    if(g.line->chipid == 0) {
-        gpio_out_write_bcm2835(g,val);
-    } else {
-        gpio_out_write_generic(g,val);
-    }
+#ifdef GPIO_NATIVE_RPI3
+    gpio_out_write_bcm2835(g,val);
+#else
+    gpio_out_write_generic(g,val);
+#endif
 }
 
 void
@@ -222,6 +215,8 @@ gpio_out_reset_generic(struct gpio_out g, uint8_t val)
     g.line->state = !!val;
 }
 
+
+#ifdef GPIO_NATIVE_RPI3
 void
 gpio_out_reset_bcm2835(struct gpio_out g, uint8_t val)
 {
@@ -233,15 +228,16 @@ gpio_out_reset_bcm2835(struct gpio_out g, uint8_t val)
     gpio_out_write_bcm2835(g, val);
     fprintf(stderr, "Selecting pin %d for output done\n", g.line->offset);
 }
+#endif
 
 void
 gpio_out_reset(struct gpio_out g, uint8_t val)
 {
-    if(g.line->chipid == 0) {
-        gpio_out_reset_bcm2835(g,val);
-    } else {
-        gpio_out_reset_generic(g,val);
-    }
+#ifdef GPIO_NATIVE_RPI3
+    gpio_out_reset_bcm2835(g,val);
+#else
+    gpio_out_reset_generic(g,val);
+#endif
 }
 
 
@@ -299,6 +295,7 @@ gpio_in_reset_generic(struct gpio_in g, int8_t pull_up)
     g.line->fd = req.fd;
 }
 
+#ifdef GPIO_NATIVE_RPI3
 void
 gpio_in_reset_bcm2835(struct gpio_in g, int8_t pull_up)
 {
@@ -318,18 +315,12 @@ gpio_in_reset_bcm2835(struct gpio_in g, int8_t pull_up)
 #endif
 
 }
+#endif
 
 void
 gpio_in_reset(struct gpio_in g, int8_t pull_up)
 {
     gpio_in_reset_generic(g,pull_up);
-    return;
-
-    if(g.line->chipid == 0) {
-        gpio_in_reset_bcm2835(g,pull_up);
-    } else {
-        gpio_in_reset_generic(g,pull_up);
-    }
 }
 
 uint8_t
@@ -340,18 +331,17 @@ gpio_in_read_generic(struct gpio_in g)
     ioctl(g.line->fd, GPIOHANDLE_GET_LINE_VALUES_IOCTL, &data);
     return data.values[0];
 }
+
+#ifdef GPIO_NATIVE_RPI3
 uint8_t
 gpio_in_read_bcm2835(struct gpio_in g)
 {
     return GET_GPIO(g.line->offset);
 }
+#endif
+
 uint8_t
 gpio_in_read(struct gpio_in g)
 {
     return gpio_in_read_generic(g);
-    if(g.line->chipid == 0) {
-        return gpio_in_read_bcm2835(g);
-    } else {
-        return gpio_in_read_generic(g);
-    }
 }
