@@ -22,6 +22,10 @@
 #define CHIP_FILE_NAME "/dev/gpiochip%u"
 #define GPIO_CONSUMER "klipper"
 
+//#define CONFIG_GPIO_NATIVE_RPI3 1
+
+DECL_CONSTANT("GPIO_NATIVE_RPI3", CONFIG_GPIO_NATIVE_RPI3);
+
 
 DECL_ENUMERATION_RANGE("pin", "gpio0", GPIO(0, 0), MAX_GPIO_LINES);
 DECL_ENUMERATION_RANGE("pin", "gpiochip0/gpio0", GPIO(0, 0), MAX_GPIO_LINES);
@@ -34,7 +38,7 @@ DECL_ENUMERATION_RANGE("pin", "gpiochip6/gpio0", GPIO(6, 0), MAX_GPIO_LINES);
 DECL_ENUMERATION_RANGE("pin", "gpiochip7/gpio0", GPIO(7, 0), MAX_GPIO_LINES);
 
 
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
 #include <sys/mman.h>
 #define BCM2708_PERI_BASE        0x3F000000
 #define GPIO_BASE                (BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
@@ -65,8 +69,10 @@ volatile unsigned *gpio;
 //
 // Set up a memory regions to access GPIO
 //
-void setup_io()
+void
+setup_io(void)
 {
+    printf("setup native rpi gpio\n");
     if(mem_fd != -1)
         return;
 
@@ -152,7 +158,7 @@ gpio_out_setup(uint32_t pin, uint8_t val)
 static void
 gpio_release_line(struct gpio_line* line)
 {
-#ifndef GPIO_NATIVE_RPI3
+#ifndef CONFIG_GPIO_NATIVE_RPI3
     if (line->fd > 0) {
         close(line->fd);
         line->fd = -1;
@@ -169,7 +175,7 @@ gpio_out_write_generic(struct gpio_out g, uint8_t val) {
     g.line->state = !!val;
 }
 
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
 void
 gpio_out_write_bcm2835(struct gpio_out g, uint8_t val)
 {
@@ -186,7 +192,7 @@ gpio_out_write_bcm2835(struct gpio_out g, uint8_t val)
 void
 gpio_out_write(struct gpio_out g, uint8_t val)
 {
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
     gpio_out_write_bcm2835(g,val);
 #else
     gpio_out_write_generic(g,val);
@@ -216,7 +222,7 @@ gpio_out_reset_generic(struct gpio_out g, uint8_t val)
 }
 
 
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
 void
 gpio_out_reset_bcm2835(struct gpio_out g, uint8_t val)
 {
@@ -226,23 +232,19 @@ gpio_out_reset_bcm2835(struct gpio_out g, uint8_t val)
     OUT_GPIO(g.line->offset);
 
     gpio_out_write_bcm2835(g, val);
-    fprintf(stderr, "Selecting pin %d for output done\n", g.line->offset);
+//    fprintf(stderr, "Selecting pin %d for output done\n", g.line->offset);
 }
 #endif
 
 void
 gpio_out_reset(struct gpio_out g, uint8_t val)
 {
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
     gpio_out_reset_bcm2835(g,val);
 #else
     gpio_out_reset_generic(g,val);
 #endif
 }
-
-
-
-
 
 void
 gpio_out_toggle(struct gpio_out g)
@@ -295,7 +297,7 @@ gpio_in_reset_generic(struct gpio_in g, int8_t pull_up)
     g.line->fd = req.fd;
 }
 
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
 void
 gpio_in_reset_bcm2835(struct gpio_in g, int8_t pull_up)
 {
@@ -332,7 +334,7 @@ gpio_in_read_generic(struct gpio_in g)
     return data.values[0];
 }
 
-#ifdef GPIO_NATIVE_RPI3
+#ifdef CONFIG_GPIO_NATIVE_RPI3
 uint8_t
 gpio_in_read_bcm2835(struct gpio_in g)
 {
