@@ -89,6 +89,10 @@ mcu_host_start()
     start-stop-daemon --start --quiet --exec $KLIPPER_HOST_MCU \
                       --background --pidfile $PIDFILE --make-pidfile \
                       -- $KLIPPER_HOST_ARGS
+
+    chrt -p 99 $(cat $PIDFILE)
+    taskset -pc 3 $(cat $PIDFILE)
+
     log_end_msg $?
 }
 
