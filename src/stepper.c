@@ -161,10 +161,14 @@ stepper_event_full(struct timer *t)
     uint_fast8_t ret = stepper_load_next(s);
     if (ret == SF_DONE || !timer_is_before(s->time.waketime, min_next_time))
         return ret;
+// This won't work at RPi 3/4 — OS is not true realtime,
+// but no harm there will be too
+#if !(CONFIG_MACH_LINUX_BCM2711 || CONFIG_MACH_LINUX_BCM2709)
     // Next step event is too close to the last unstep
     int32_t diff = s->time.waketime - min_next_time;
     if (diff < (int32_t)-timer_from_us(1000))
         shutdown("Stepper too far in past");
+#endif
 reschedule_min:
     s->time.waketime = min_next_time;
     return SF_RESCHEDULE;

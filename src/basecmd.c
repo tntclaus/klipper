@@ -173,7 +173,13 @@ move_finalize(void)
         shutdown("Already finalized");
     struct move_queue_head dummy;
     move_queue_setup(&dummy, sizeof(*move_free_list));
+#if CONFIG_MACH_LINUX_BCM2711 || CONFIG_MACH_LINUX_BCM2709
+    // increase move list size in case an interrup arrives and we'll need to store
+    // more moves for timebeing
+    move_list = alloc_chunks(move_item_size, 1024*4, &move_count);
+#else
     move_list = alloc_chunks(move_item_size, 1024, &move_count);
+#endif
     move_reset();
 }
 

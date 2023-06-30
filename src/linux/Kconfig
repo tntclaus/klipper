@@ -16,9 +16,12 @@ config BOARD_DIRECTORY
     string
     default "linux"
 
+# For Pi 3 and 4 see: https://github.com/hzeller/rpi-gpio-dma-demo
 config CLOCK_FREQ
     int
-    default 50000000
+    default 1000000000 if MACH_LINUX_BCM2711
+    default  500000000 if MACH_LINUX_BCM2709
+    default   50000000
 
 
 choice
